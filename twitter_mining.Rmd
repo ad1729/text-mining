@@ -315,7 +315,7 @@ data.frame(name = names(uni_tdm_tfidf_freq), freq = uni_tdm_tfidf_freq) %>%
   dplyr::slice(1:n_words) %>%
   ggplot(data = ., aes(x = reorder(name, freq), y = freq)) + 
   geom_bar(stat = "identity") + theme_bw() + coord_flip() + 
-  ylab("Word Count") + xlab("Term")
+  ylab("Word Count") + xlab("Term") + ggtitle("Barplot for Terms with TFIDF Weighting")
 ```
 
 ```{r, fig.height = 6, fig.width = 8}

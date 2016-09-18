@@ -232,3 +232,27 @@ trigram_tdm %>% as.matrix() %>% rowSums() %>% sort(., decreasing = TRUE) %>%
   wordcloud(names(.), ., max.words = 5)
 
 # weighting terms using TF-IDF and forming word cloud
+uni_tdm_tfidf = TermDocumentMatrix(dengue_corpus_clean, control = list(weighting = weightTfIdf))
+
+uni_tdm_tfidf_freq = uni_tdm_tfidf %>% as.matrix() %>% 
+  rowSums() %>% sort(., decreasing = TRUE) 
+
+# with TFIDF
+uni_tdm_tfidf_freq %>% head(10)
+
+# only TF
+freq %>% head(10)
+
+# bar chart
+data.frame(name = names(uni_tdm_tfidf_freq), freq = uni_tdm_tfidf_freq) %>%
+  dplyr::slice(1:n_words) %>%
+  ggplot(data = ., aes(x = reorder(name, freq), y = freq)) + 
+  geom_bar(stat = "identity") + theme_bw() + coord_flip() + 
+  ylab("Word Count") + xlab("Term")
+
+# unigram wordcloud with weighting
+par(mfrow = c(1,2))
+wordcloud(names(freq), freq, max.words = 50, col = pal3, scale = c(1,2))
+title("Weight: TF")
+uni_tdm_tfidf_freq %>% wordcloud(names(.), ., max.words = 50, col = pal3, scale = c(1,2))
+title(main = "Weight: TFIDF")
