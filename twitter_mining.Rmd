@@ -1,0 +1,342 @@
+---
+title: "Dengue Twitter Mining"
+author: "Akshat Dwivedi"
+date: "`r Sys.Date()`"
+#runtime: shiny
+output: 
+  html_document: 
+    theme: cosmo
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, fig.align = "center")
+library(twitteR)
+library(magrittr)
+source("twitter_oauth.R")
+```
+
+## Configuring twitter
+Pulling data from Twitter directly into R is quite straightforward to setup. For R, one needs the `twitteR` package from CRAN. A twitter account can be setup the usual way and a new app can be created by going here [https://apps.twitter.com/app/new](https://apps.twitter.com/app/new). In the "Callback URL" box, one can paste: `http://127.0.0.1:1410`, which [avoids an error](https://stackoverflow.com/questions/25856394/r-twitter-package-authorization-error) that comes up later in the process. Here's [another tutorial](https://www.r-bloggers.com/getting-started-with-twitter-in-r/) that describes how to setup a twitter app. It is rather old and the `twitteR::getTwitterOAuth()` function is deprecated in favour of `twitteR::setup_twitter_oauth()` function but I found the screenshots from the tutorial helpful. [Here's a more recent tutorial.](https://www.r-bloggers.com/setting-up-the-twitter-r-package-for-text-analytics/) Next, in RStudio, one should run the following code:
+
+```{r, eval=FALSE}
+library(twitteR)
+setup_twitter_oauth("consumer_key", "consumer_secret", "access_token", "access_key")
+# select 1 for saving the file, throws an error (for browser authentication) if the "Callback URL" field is left blank in the twitter app dashboard (on the twitter website).
+```
+
+where `consumer_key` and `consumer_secret` can be obtained from the "Keys and Access Tokens" tab on the twitter application dashboard [https://apps.twitter.com/app/](https://apps.twitter.com/app/). Once the above command is run, it should successfully have setup access to the Twitter API. More information can be found on [https://dev.twitter.com/overview/api](https://dev.twitter.com/overview/api).
+
+## Using `twitteR` To Pull Data
+
+Now that we have twitter setup, we can begin querying and modelling twitter data. One useful function is `twitteR::getCurRateLimitInfo()` which highlights the [rate limit on the API](https://dev.twitter.com/rest/public/rate-limiting), i.e., it tells us how many times we can query the twitter API per unit time for a given task (eg. sending a DM, searching tweets, downloading the status for a given user, etc). Consulting the documentation, one observes that twitter allows 15 or 180 queries in a 15-minute time span. The 15 or 180 limit depends on which function is being performed on twitter through the API. Since this tutorial retsricts itself to analyzing the text in a tweet for a given term, we primarily use the API to search for a given term and pull corresponding tweets. Consulting the official documentation, we see that the limit for search queries on tweets is 180. For example, if we pull 10 tweets containing the term `coffee`, it counts as 1 query and 179 queries will be possible for the next 15 minute period.
+
+After performing a query, we can run `twitteR::getCurRateLimitInfo()` to see the remaining number of queries and the exact time (in GMT) at which the rate limit will be reset. This gives a large amount of information. If one is interested in only a particular task, it can be passed to the function as a string, for example "search" (`twitteR::getCurRateLimitInfo(resources = "search")`) which gives us how many search queries remain out of 180. More information is given in the relevant help file for the function. Running the function gives the following output:
+
+```{r}
+suppressPackageStartupMessages(library(magrittr)) # for using the (pipe) %>% operator
+# returns a data.frame
+twitteR::getCurRateLimitInfo() %>% head(., n = 10)
+```
+
+and for "search"
+
+```{r}
+twitteR::getCurRateLimitInfo("search") #time in GMT
+```
+
+The main function for performing a query and pulling corresponding tweets is `searchTwitter()`. The arguments can be found on the corresponding help page by running `?searchTwitter`. The first argument is the `searchString` which takes the term(s) we wish to query. An example would be "coffee" or "#scala". More information about [specifying search terms is found on the official API docs.](https://dev.twitter.com/rest/public/search) Some other arguments that can be passed to the `searchTwitter()` function are location, language (of the tweet), number of tweets to fetch among others. The full list of arguments can be found in the relevant help file. Consulting the API documentation on the web, it appears that  the number of tweets per query is capped at 100. The documentation also lists errors that can sometimes occur when this function is called.
+
+For this demonstration, the `twitteR::search_twitter_and_store()` function is used since we can use it to fetch the tweets for a given search string and store it in an SQL database. The above function automatically pulls in 5000 tweets. The next code chunk shows that we first have to register a database, i.e., open a connection to it. If the database doesn't exist, a database with the same name is created in the project directory. Then, the `twitteR::search_twitter_and_store()` function is run to find tweets with either "Dengue" or "dengue". The `table` argument takes the name of the database where the tweets should be stored. Rest of the arguments passed to the function are the same as that for `searchTwitter()`.
+
+```{r}
+# getting the data
+register_sqlite_backend("dengue_tweets_db") # if db doesn't exist, it will be created.
+```
+
+Previous code chunk creates a connection to the database. Next code chunk downloads the tweets from twitter and writes it to the database.
+
+```{r, eval=FALSE}
+dengue_raw = search_twitter_and_store("dengue+Dengue", table_name = "dengue_tweets_db", lang = "en")
+```
+
+In the above code chunk, we create a database called `dengue_tweets_db` and store the results from the query into this database. (We can run `twitteR::getCurRateLimitInfo(resources = "search")` to see how many queries remain after the function call in the previous code chunk.) Beware: the query can take some time to run. The above code chunk exhausted 50 queries since it pulled 50 * 100 (tweets per query) = 5000 tweets. (Note: there were some issues for me when I tried to set the number of tweets in the function call manually so I left it at the default (5000).)
+
+```{r}
+# loading the downloaded tweets
+dengue_tweets_db = load_tweets_db(table_name = "dengue_tweets_db") %>% twListToDF()
+```
+
+The above chunk loads the downloaded tweets from the database where they were stored. The `twitteR::twListToDF()` function converts the downloaded tweets and corresponding metadata into a data frame for ease of analysis. We can have a look at the contents of this data frame.
+
+```{r}
+dplyr::glimpse(dengue_tweets_db)
+```
+
+The twitter data frame contains lots of information. For text analyses conducted below, perhaps the first column is the most relevant as that contains the text from the tweets. The other columns could be more useful: for example, using retweet count to measure the impact of the tweet, to check whether the tweet was retweeted, obtain the spatial coordinates for the entity behind a particular tweet, etc. For the time being, we restrict ourselves to the text of the tweets (stored in the variable `dengue_tweets`) which are processed in the next section.
+
+```{r}
+dengue_tweets = dengue_tweets_db$text
+head(dengue_tweets)
+```
+
+## Preprocessing Tweets
+
+We apply some common function to process the text data. The main packages in R for text mining/analysis are `qdap` and `tm`. Both have functions that can be used to clean up text (remove punctuations, hyperlinks, numbers, convert numeric values into words, etc.)
+
+For preprocessing/cleaning tweets, we can write a cleaning function that applies cleaning operations on any dataset. This is coded below and described following the code chunk.
+
+```{r}
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(tm))
+suppressPackageStartupMessages(library(qdap))
+
+removeEmoji = function(vec) {
+  # define emoji unicode or unicode for other related symbols
+  # https://stackoverflow.com/questions/24672834/how-do-i-remove-emoji-from-string
+  # emoticons
+  vec = gsub(pattern = "[\U0001F600-\U0001F64F]", "", x = vec)
+  # symbols and pics
+  vec = gsub(pattern = "[\U0001F300-\U0001F5FF]", "", x = vec)
+  # dingbats
+  vec = gsub(pattern = "[\U00027000-\U00027BFF]", "", x = vec)
+  return(vec)
+}
+
+# processing the tweets
+clean_tweets = function(corpus) {
+  # removeEmoji has to be defined
+  corpus = tm_map(corpus, content_transformer(removeEmoji))
+  corpus = tm_map(corpus, stripWhitespace)
+  corpus = tm_map(corpus, removePunctuation)
+  corpus = tm_map(corpus, removeNumbers)
+  corpus = tm_map(corpus, content_transformer(tolower))
+  corpus = tm_map(corpus, removeWords, c("Dengue", "dengue"))
+  # removing most common english stop words
+  # stopwords("en")
+  corpus = tm_map(corpus, removeWords, stopwords("en"))
+  # stemming the document (processing the words to have the same root)
+  corpus = tm_map(corpus, stemDocument)
+  return(corpus)
+}
+```
+
+The `removeEmoji` function uses [regular expressions](https://en.wikipedia.org/wiki/Regular_expression) to search for the Unicode characters corresponding to emojis and other symbols in the tweets. **Of course, removing these would be counterproductive if sentiment analysis was the goal.** Cleaning emojis and symbols from tweets was painful because of all the errors encountered. Details are given in the comments in the accompanying R script. The solution to the errors was converting the tweets from ASCII to UTF-8 which did away with the errors. Incorrectly parsed characters were removed by the removeEmoji function.
+
+Most of the cleaning functions applied to the corpus ares elf-explanatory. The `removeWords` function with the argument `stopwords("en")` removes the most common stopwords in English. The `stemDocument` function [performs word stemming](https://en.wikipedia.org/wiki/Stemming), which involves truncating words with a common root and replacing it with a single word. For example (taken from the linked Wiki article), "fishing", "fished" and "fisher" are replaced by their root word: fish. It should be noted that the word stem need not necessarily be a word on it's own. More examples are found on the linked wikipedia page. 
+
+```{r}
+# top 30 common stopwords in english and german
+stopwords("en") %>% head(30)
+stopwords("de") %>% head(30)
+```
+
+This removes the most common words. However, there might be other words that appear in almost all the documents but are not stop words. Handling these (weighting terms) is considered later on. The tweets are stored in a corpus and then cleaned/processed. A corpus is a structured set of texts.
+
+```{r}
+dengue_corpus = dengue_tweets %>% 
+  iconv(., "ASCII", "UTF-8", sub = "") %>% # converts tweets to UTF-8
+  VectorSource() %>% # tells R to consider each tweet as a document
+  VCorpus() #V := volatile which tells R to store the corpus in memory (oppo: PCorpus)
+
+# clean the corpus
+dengue_corpus_clean = clean_tweets(dengue_corpus)
+dengue_corpus_clean
+```
+
+This shows that our corpus has 5000 documents (ie, tweets). Next up, various visualizations are created and the contents of the tweets are explored.
+
+## Visualizing Tweets
+
+From the corpus, we can create two types of matrices: the `DocumentTermMatrix` (DTM) and the `TermDocumentMatrix` (TDM). The DTM has each document as a row and the words as columns. The TDM is the transpose of the DTM matrix, where the documents become the column and words the rows.
+
+```{r}
+# creating DocumentTermMatrix from the dengue corpus
+dengue_dtm = DocumentTermMatrix(dengue_corpus_clean)
+dengue_dtm
+```
+
+From the output, we see that the DTM is highly sparse (100%) and has only 48788 non-sparse (ie non zero) entries out of 30 million! Each column is a word that occurs in at least one document and the corresponding row index for that word indicates the documents in which it occurs. A small submatrix is printed below.
+
+```{r}
+inspect(dengue_dtm[1:10,1:10])
+```
+
+All the entries in this submatrix are 0 as a result of sparsity. The term/word frequencies are obtained by getting the column sums (ie summing the entries in each column) in the DocumentTermMatrix, whereas in the TermDocumentMatrix the term frequencies are obtained by summing across rows instead of columns. These are shown below.
+
+```{r}
+# top n words
+freq = dengue_dtm %>% as.matrix() %>% 
+  colSums() %>% sort(., decreasing = TRUE) 
+freq %>% head(50)
+```
+
+Some of these words convey useful information: a lot of the tweets mention Delhi, Zika, fever, mosquito, chikungunya, etc. Speaking to my family back home (in Delhi), it is confirmed that Dengue and Chinkungunya cases are rather high. Arvind Kejriwal is the current chief minister of Delhi and is mentioned in some of the tweets as a result. However, since this corpus of tweets is only a fraction of the tweets captured at a specific minute of a specific day, it may not provide a complete global picture about Dengue. Furthemore, some words are quite common but may not have anything to do with Dengue: http/https (tweets were not stripped of hyperlinks), via, may, run, amount, etc. We can also find term frequencies using the `tm::findFreqTerms()` function which takes minimum and maximum frequencies respectively.
+
+```{r}
+findFreqTerms(dengue_dtm, 100)
+```
+
+It displays the terms that appear more than 100 times, although it does not list the correspoding frequencies.
+
+A popular visualization tool is the wordcloud. It is displayed below.
+
+```{r, fig.height=8, fig.width=8}
+library(wordcloud)
+wordcloud(names(freq), freq, max.words = 150)
+```
+
+For those from Delhi, a lot of the terms make sense, which may not be the case for those outside Delhi. Examples: arvindkejriw, jpnadda (Union minister for health), aap, mohali, satyendarjain, cmodilli, aamaadmiparti, narendramodi, mohfwindia, swasthabharat, etc etc.
+
+The `wordcloud` function takes several arguments, with `colour`, `max.words` being the most important ones. We can use the colour palettes that are available in the R package `RColorBrewer`, which can be viewed by `RColorBrewer::display.brewer.all()`. This is shown below:
+
+```{r, fig.width=7, fig.height=7}
+suppressPackageStartupMessages(library(RColorBrewer))
+RColorBrewer::display.brewer.all()
+```
+
+We replot the wordcloud with two different colour palettes, which can be accessed through the `brewer.pal()` function.
+
+```{r}
+pal1 = brewer.pal(9, "GnBu")[-(1:3)]
+wordcloud(names(freq), freq, max.words = 100, colors = pal1)
+```
+
+```{r}
+pal2 = brewer.pal(9, "OrRd")[-(1:3)]
+wordcloud(names(freq), freq, max.words = 50, colors = pal2)
+```
+
+```{r}
+pal3 = brewer.pal(8, "Dark2")
+wordcloud(names(freq), freq, max.words = 50, colors = pal3)
+```
+
+We can plot term frequencies as bar chart too, although personally I find the wordcloud more visually appealing as well as interpretable by a broader audience. Nevertheless, a barchat is visualized below.
+
+```{r}
+# top 20 terms
+n_words = 20
+
+freq_df = data.frame(name = names(freq), freq = freq, row.names = 1:length(freq)) %>%
+  dplyr::mutate(name = as.character(name)) %>% # coercing factor to character
+  dplyr::slice(1:n_words) %>%
+  dplyr::arrange(desc(freq))
+
+ggplot(data = freq_df, aes(x = reorder(name, freq), y = freq)) + 
+  geom_bar(stat = "identity") + theme_bw() + coord_flip() + 
+  ylab("Word Count") + xlab("Term")
+```
+
+So far, we have only analyzed single words and their frequencies. A limitation of this approach is that single words may not convey as much information as phrases or more formally, n-grams, where n is the number of tokens in the phrase. For example, a bigram would consist of 2 words: if the unigram had a high occurrence of the term "fever"", then the bigram may be "high fever"" which conveys more information than the unigram. Similarly, a trigram (n = 3) may have the phrase "very high fever". Thus, creating a wordcloud of bigrams or trigrams may provide more information about the object of interest. 
+
+### Bigrams
+
+Creating $n$-grams is rather straightforward. This is accomplished by using the `NGramTokenizer()` function from the R package `RWeka`. We create the following two functions for using Weka to create 2- and 3-gram tokens.
+
+```{r}
+# gives information about the Weka_control for a given Weka functions
+RWeka::WOW("NGramTokenizer")
+
+## trying word clouds with 2- and 3-grams
+## use RWeka::NGramTokenizer
+bigram_token = function(x) RWeka::NGramTokenizer(x, Weka_control(min = 2, max = 2))
+trigram_token = function(x) RWeka::NGramTokenizer(x, Weka_control(min = 3, max = 3))
+```
+
+The `Weka_control()` argument takes a list of further arguments with `min` and `max` being the most important arguments that specify the `n` in the $n$-gram.
+
+```{r bigram, eval = FALSE}
+# throwing some error; needs to be fixed
+bigram_tdm = TermDocumentMatrix(dengue_corpus_clean, control = list(tokenize = bigram_token))
+```
+
+```{r}
+load("bigram_tdm.RData") # run in the main script and saved there
+
+bigram_tdm
+
+tdm_matrix = as.matrix(bigram_tdm)
+bigram_freq = rowSums(tdm_matrix) %>% sort(., decreasing = TRUE)
+bigram_freq %>% head(50)
+```
+
+The top bigram is "hdfcergog theeasyway" which does not appear to have much to do with dengue. Perhaps some general insurance that is offered by HDFC ergo. "rt dhesimd" upon googling results in the following [twitter profile of an MD working with Zika](https://twitter.com/dhesimd) and "rt" stands for retweet. The top 20 words are visualized as a wordcloud below.
+
+```{r}
+wordcloud(names(bigram_freq), bigram_freq, max.words = 20, col = pal3, scale = c(1,2))
+```
+
+### Trigrams
+
+Similar to the bigram subsection, we can construct and plot the corresponding wordclouds for the trigrams as well. This is done using the following code.
+
+```{r, eval = FALSE}
+# throwing some error
+trigram_tdm = TermDocumentMatrix(dengue_corpus_clean, control = list(tokenize = trigram_token))
+```
+
+```{r}
+load("trigram_tdm.RData")
+
+trigram_tdm
+
+# top n phrases
+trigram_tdm %>% as.matrix() %>% rowSums() %>% sort(., decreasing = TRUE) %>% head(10)
+
+# wordcloud
+trigram_tdm %>% as.matrix() %>% rowSums() %>% sort(., decreasing = TRUE) %>%
+  wordcloud(names(.), ., max.words = 20, col = pal3, scale = c(1,2))
+```
+
+In this case, the bigrams and trigrams do not seem to be particularly informative compared to the unigrams.
+
+### Weighting Terms
+
+There are various methods to assess the importance of terms in a corpus. One such method is the TF-IDF which stands for Term Frequency - Inverse Document Frequency, the details of which are given in the [Wikipedia article](https://en.wikipedia.org/wiki/Tf%E2%80%93idf) on the topic. So far, the approach we have employed has just been based on term frequency (TF). This simply counts the number of times the term appears in each document in the corpus and then sums these counts across the documents in the corpus.
+
+The TF is multiplied by a factor, called the inverse-document frequency (IDF), which takes into account how common a word is across documents. Mathematically, it is the log of the ratio of the total number of documents in the corpus divided by the number of documents that contain that term. Ideally, this should give less weight to the most common terms across the documents. 
+
+It is simple to take this weighting into account, by using `control = list(weighting = weightTfIdf)` argument in the `TermDocumentMatrix()` function. A wordcloud of unigrams is created using this weighting scheme.
+
+```{r}
+uni_tdm_tfidf = TermDocumentMatrix(dengue_corpus_clean, control = list(weighting = weightTfIdf))
+
+uni_tdm_tfidf_freq = uni_tdm_tfidf %>% as.matrix() %>% 
+  rowSums() %>% sort(., decreasing = TRUE) 
+
+# with TFIDF
+uni_tdm_tfidf_freq %>% head(10)
+
+# only TF
+freq %>% head(10)
+
+# bar chart
+data.frame(name = names(uni_tdm_tfidf_freq), freq = uni_tdm_tfidf_freq) %>%
+  dplyr::slice(1:n_words) %>%
+  ggplot(data = ., aes(x = reorder(name, freq), y = freq)) + 
+  geom_bar(stat = "identity") + theme_bw() + coord_flip() + 
+  ylab("Word Count") + xlab("Term")
+```
+
+```{r, fig.height = 6, fig.width = 8}
+# unigram wordcloud with weighting
+par(mfrow = c(1,2))
+wordcloud(names(freq), freq, max.words = 50, col = pal3, scale = c(1,2))
+title("Weight: TF")
+uni_tdm_tfidf_freq %>% wordcloud(names(.), ., max.words = 50, col = pal3, scale = c(1,2))
+title(main = "Weight: TFIDF")
+```
+
+We can see that the top 10 names have changed between the two weighting schemes. In this case, one sees that mosquito drops out of the top 10 words under the new weighting scheme. This is understandable since mosquito doesn't contribute additional information for those searching for dengue since dengue is caused by mosquitos. This can be useful for downweighting more frequent terms that do not contribute much information when one does not know in advance exactly which terms these are, since if we did know them we would add them to the `removeWords()` function in `clean_tweets()`.
+
+This concludes the first part of this article. A follow up article will contain different visualizations, sentiment analysis, correlations with different but similar terms (for example comparing Dengue and Zika), using a larger corpus of tweets, etc.
+
+The static version will be posted on github, and the dynamic version of this article will be hosted on [www.shinyapps.io](www.shinyapps.io).
+
+```{r, echo = FALSE, cache = FALSE, eval = FALSE}
+numericInput("rows", "How many cars?", 5)
+
+renderTable({
+  head(cars, input$rows)
+})
+```

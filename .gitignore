@@ -1,0 +1,11 @@
+.httr-oauth
+.RData
+.Rhistory
+qdap.pdf
+qdap_cleaning_and_debugging.pdf
+qdap Package Vignette.html
+tm.pdf
+tm - vignette.pdf
+twitter_oauth.R
+twitter_mining_cache/*
+.Rproj.user/*
