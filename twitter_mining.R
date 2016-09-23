@@ -1,3 +1,5 @@
+# https://cran.r-project.org/web/views/NaturalLanguageProcessing.html
+
 library(tm)
 library(magrittr)
 library(qdap)
@@ -6,6 +8,8 @@ library(plotrix)
 library(RWeka)
 library(RColorBrewer)
 library(SnowballC)
+library(stringi)
+#https://cran.r-project.org/web/packages/stringi/stringi.pdf
 
 source("twitter_oauth.R")
 
@@ -256,3 +260,23 @@ wordcloud(names(freq), freq, max.words = 50, col = pal3, scale = c(1,2))
 title("Weight: TF")
 uni_tdm_tfidf_freq %>% wordcloud(names(.), ., max.words = 50, col = pal3, scale = c(1,2))
 title(main = "Weight: TFIDF")
+
+# graphing tweets
+library(graphTweets)
+help("graphTweets")
+str(dengue_tweets_db)
+
+# cleaning the first column
+to_utf8 = function(x) {iconv(x, "ASCII", "UTF-8", sub = "")}
+dengue_tweets_db_clean = data.frame(dengue_tweets_db[-1], 
+                                    lapply(dengue_tweets_db[1], to_utf8)) %>%
+  dplyr::mutate(text = as.character(text))
+
+str(dengue_tweets_db_clean)  
+
+edges = getEdges(data = dengue_tweets_db_clean[1:50,], tweets = "text", source = "screenName")
+
+graph1 = igraph::graph.data.frame(edges, directed = TRUE)
+plot(graph1)
+
+nodes = getNodes(edges, source = "source", target = "target", "retweetCount")

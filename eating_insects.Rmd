@@ -1,0 +1,16 @@
+---
+title: 'Eating Insects: Sentiment Analysis'
+author: "Akshat Dwivedi"
+date: "`r Sys.Date()`"
+output: html_document
+output: 
+  html_document: 
+    theme: cosmo
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, fig.align = "center")
+library(twitteR)
+```
+
+The aim of this mini-project is to perform sentiment analysis on twitter data on the topic of eating insects.

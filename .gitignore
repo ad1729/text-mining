@@ -9,3 +9,5 @@ tm - vignette.pdf
 twitter_oauth.R
 twitter_mining_cache/*
 .Rproj.user/*
+.Rproj.user
+rsconnect/*
